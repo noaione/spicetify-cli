@@ -51,6 +51,7 @@ const CONFIG = {
 		["translation-mode:japanese"]: localStorage.getItem("lyrics-plus:visual:translation-mode:japanese") || "furigana",
 		["translation-mode:korean"]: localStorage.getItem("lyrics-plus:visual:translation-mode:korean") || "hangul",
 		["translation-mode:chinese"]: localStorage.getItem("lyrics-plus:visual:translation-mode:chinese") || "cn",
+		["translation-mode:mxm-crowd"]: localStorage.getItem("lyrics-plus:visual:translation-mode:mxm-crowd") || "none",
 		["translate"]: getConfig("lyrics-plus:visual:translate", false),
 		["ja-detect-threshold"]: localStorage.getItem("lyrics-plus:visual:ja-detect-threshold") || "40",
 		["hans-detect-threshold"]: localStorage.getItem("lyrics-plus:visual:hans-detect-threshold") || "40",
@@ -123,6 +124,7 @@ const emptyState = {
 };
 
 let lyricContainerUpdate;
+let lyricsCrowdFetch;
 
 const fontSizeLimit = { min: 16, max: 256, step: 4 };
 
@@ -149,6 +151,8 @@ class LyricsContainer extends react.Component {
 			tw: null,
 			musixmatchTranslation: null,
 			neteaseTranslation: null,
+			crowdTranslations: null,
+			selectedCrowdTranslation: null,
 			uri: "",
 			provider: "",
 			colors: {
@@ -282,12 +286,12 @@ class LyricsContainer extends react.Component {
 				finalData.copyright = `${styledMode} lyrics provided by ${data.provider}\n${finalData.copyright || ""}`.trim();
 			}
 
-			if (finalData.musixmatchTranslation && typeof finalData.musixmatchTranslation[0].startTime === "undefined" && finalData.synced) {
-				finalData.musixmatchTranslation = finalData.synced.map(line => ({
-					...line,
-					text: finalData.musixmatchTranslation.find(l => Utils.processLyrics(l.originalText) === Utils.processLyrics(line.text))?.text ?? line.text
-				}));
-			}
+			// if (finalData.musixmatchTranslation && typeof finalData.musixmatchTranslation[0].startTime === "undefined" && finalData.synced) {
+			// 	finalData.musixmatchTranslation = finalData.synced.map(line => ({
+			// 		...line,
+			// 		text: finalData.musixmatchTranslation.find(l => Utils.processLyrics(l.originalText) === Utils.processLyrics(line.text))?.text ?? line.text
+			// 	}));
+			// }
 
 			CACHE[data.uri] = finalData;
 			return finalData;
@@ -309,6 +313,7 @@ class LyricsContainer extends react.Component {
 			this.state.tw =
 			this.state.musixmatchTranslation =
 			this.state.neteaseTranslation =
+			this.state.selectedCrowdTranslation =
 				null;
 		const info = this.infoFromTrack(track);
 		if (!info) {
@@ -328,6 +333,7 @@ class LyricsContainer extends react.Component {
 			if (CACHE[info.uri]?.[CONFIG.modes[mode]]) {
 				this.resetDelay();
 				this.setState({ ...CACHE[info.uri], isCached });
+				lyricsCrowdFetch && lyricsCrowdFetch();
 				this.translateLyrics();
 				return;
 			}
@@ -335,6 +341,7 @@ class LyricsContainer extends react.Component {
 			if (CACHE[info.uri]) {
 				this.resetDelay();
 				this.setState({ ...CACHE[info.uri], isCached });
+				lyricsCrowdFetch && lyricsCrowdFetch();
 				this.translateLyrics();
 				return;
 			}
@@ -352,6 +359,7 @@ class LyricsContainer extends react.Component {
 			this.setState({ ...resp, isLoading: false, isCached });
 		}
 
+		lyricsCrowdFetch && lyricsCrowdFetch();
 		this.translateLyrics();
 	}
 
@@ -534,6 +542,40 @@ class LyricsContainer extends react.Component {
 		event.target.value = "";
 	}
 
+	async checkAndUpdateMxMCrowd() {
+		const tlSource = CONFIG.visual["translate:translated-lyrics-source"];
+
+		if (tlSource == "none") {
+			this.setState({ selectedCrowdTranslation: null });
+			return;
+		}
+
+		if (
+			tlSource.startsWith("musixmatchTranslation:") &&
+			this.state.musixmatchTranslation &&
+			this.state.synced &&
+			this.state.provider.toLowerCase().includes("musixmatch")
+		) {
+			const code = tlSource.replace("musixmatchTranslation:", "");
+			const language = this.state.musixmatchTranslation.find(lang => lang.code === code);
+			if (language) {
+				if (this.state.selectedCrowdTranslation) {
+					if (this.state.selectedCrowdTranslation.code === language.code && this.state.selectedCrowdTranslation.id === language.id) {
+						console.debug("Already set to crowd translation", language);
+						return;
+					}
+				}
+				console.debug("Fetching crowd translation for", language);
+				const translations = await ProviderMusixmatch.fetchTranslationsForLanguage(language, this.state.synced);
+				if (translations) {
+					this.setState({ selectedCrowdTranslation: translations });
+					return;
+				}
+			}
+		}
+		this.setState({ selectedCrowdTranslation: null });
+	}
+
 	componentDidMount() {
 		this.onQueueChange = async ({ data: queue }) => {
 			this.state.explicitMode = this.state.lockMode;
@@ -562,6 +604,14 @@ class LyricsContainer extends react.Component {
 		lyricContainerUpdate = () => {
 			this.updateVisualOnConfigChange();
 			this.forceUpdate();
+		};
+
+		lyricsCrowdFetch = async () => {
+			this.checkAndUpdateMxMCrowd()
+				.then(() => {})
+				.catch(err => {
+					console.error(err);
+				});
 		};
 
 		this.viewPort = document.querySelector(".Root__main-view .os-viewport");
@@ -722,14 +772,18 @@ class LyricsContainer extends react.Component {
 		let showTranslationButton;
 		let friendlyLanguage;
 
-		const hasTranslation = this.state.neteaseTranslation !== null || this.state.musixmatchTranslation !== null;
+		const hasTranslation = this.state.neteaseTranslation !== null;
+		const crowdTranslations = this.state.musixmatchTranslation;
 
 		if (mode !== -1) {
 			this.lyricsSource(mode);
+			const hasMxmCrowd = crowdTranslations && crowdTranslations.length > 0;
 			const language = this.provideLanguageCode(this.state.currentLyrics);
 			friendlyLanguage = language && new Intl.DisplayNames(["en"], { type: "language" }).of(language.split("-")[0])?.toLowerCase();
-			showTranslationButton = (friendlyLanguage || hasTranslation) && (mode === SYNCED || mode === UNSYNCED);
-			const translatedLyrics = this.state[CONFIG.visual[`translation-mode:${friendlyLanguage}`]];
+			showTranslationButton = (friendlyLanguage || hasTranslation || hasMxmCrowd) && (mode === SYNCED || mode === UNSYNCED);
+			const translatedLyrics = this.state.selectedCrowdTranslation
+				? this.state.selectedCrowdTranslation.translations
+				: this.state[CONFIG.visual[`translation-mode:${friendlyLanguage}`]];
 
 			if (mode === KARAOKE && this.state.karaoke) {
 				activeItem = react.createElement(CONFIG.visual["synced-compact"] ? SyncedLyricsPage : SyncedExpandedLyricsPage, {
@@ -811,9 +865,9 @@ class LyricsContainer extends react.Component {
 					react.createElement(TranslationMenu, {
 						friendlyLanguage,
 						hasTranslation: {
-							musixmatch: this.state.musixmatchTranslation !== null,
 							netease: this.state.neteaseTranslation !== null
-						}
+						},
+						crowdTranslations: this.state.musixmatchTranslation
 					}),
 				react.createElement(AdjustmentsMenu, { mode }),
 				react.createElement(

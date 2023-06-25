@@ -86,7 +86,7 @@ const OptionsMenu = react.memo(({ options, onSelect, selected, defaultValue, bol
 	);
 });
 
-const TranslationMenu = react.memo(({ friendlyLanguage, hasTranslation }) => {
+const TranslationMenu = react.memo(({ friendlyLanguage, hasTranslation, crowdTranslations }) => {
 	const items = useMemo(() => {
 		let sourceOptions = {
 			none: "None"
@@ -102,10 +102,18 @@ const TranslationMenu = react.memo(({ friendlyLanguage, hasTranslation }) => {
 
 		let modeOptions = {};
 
-		if (hasTranslation.musixmatch) {
+		if (crowdTranslations) {
+			let crowdOptions = {};
+			for (let i = 0; i < crowdTranslations.length; i++) {
+				const crowdTL = crowdTranslations[i];
+				/** @type {string} */
+				const targetTL = crowdTL.to.substring(0, 1).toUpperCase() + crowdTL.to.substring(1);
+				crowdOptions[`musixmatchTranslation:${crowdTL.code}`] = `${targetTL} (Musixmatch)`;
+			}
+
 			sourceOptions = {
 				...sourceOptions,
-				musixmatchTranslation: "English (Musixmatch)"
+				...crowdOptions
 			};
 		}
 
@@ -174,7 +182,7 @@ const TranslationMenu = react.memo(({ friendlyLanguage, hasTranslation }) => {
 				renderInline: true
 			}
 		];
-	}, [friendlyLanguage]);
+	}, [friendlyLanguage, crowdTranslations]);
 
 	useEffect(() => {
 		// Currently opened Context Menu does not receive prop changes
@@ -212,6 +220,7 @@ const TranslationMenu = react.memo(({ friendlyLanguage, hasTranslation }) => {
 								CONFIG.visual[name] = value;
 								localStorage.setItem(`${APP_NAME}:visual:${name}`, value);
 								lyricContainerUpdate?.();
+								lyricsCrowdFetch?.();
 							}
 						})
 					),

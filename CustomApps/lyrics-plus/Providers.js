@@ -78,14 +78,12 @@ const Providers = {
 			result.unsynced = unsynced;
 			result.copyright = list["track.lyrics.get"].message?.body?.lyrics?.lyrics_copyright?.trim();
 		}
-		const translation = await ProviderMusixmatch.getTranslation(list);
-		if ((synced || unsynced) && translation) {
-			const baseLyrics = synced ?? unsynced;
-			result.musixmatchTranslation = baseLyrics.map(line => ({
-				...line,
-				text: translation.find(t => t.matchedLine === line.text)?.translation ?? line.text,
-				originalText: line.text
-			}));
+
+		if (synced) {
+			const crowdTranslation = await ProviderMusixmatch.getCrowdTranslation(list, synced);
+			if (crowdTranslation) {
+				result.musixmatchTranslation = crowdTranslation;
+			}
 		}
 
 		return result;
